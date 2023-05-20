@@ -2,6 +2,11 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import itertools
+import json
+import re
+
+from data_loader import DataLoader
+
 from collections import Counter
 from wordcloud import WordCloud
 
@@ -35,11 +40,11 @@ class FrequencyAnalysis:
         wordcloud.generate_from_frequencies(dict(noun_list))
         wordcloud.to_file(filename)
         
-    def wordcloud_Rank(self, token, N = 30, white = True, title = 'out'):
-        if not os.path.exists(title + '/Wordcloud'):
-            os.makedirs(title + '/Wordcloud')
-        filename = title + '/Wordcloud/keyword_wordcloud.png'
-        filename_csv = title + '/Wordcloud/keyword_count.csv'
+    def wordcloud_Rank(self, token, N = 30, white = True, outdir = 'out', filename=''):
+        if not os.path.exists(outdir + '/Wordcloud'):
+            os.makedirs(outdir + '/Wordcloud')
+        filename_png = outdir + f'/Wordcloud/{filename}.png'
+        filename_csv = outdir + f'/Wordcloud/{filename}.csv'
         
         flatten_tokens = list(itertools.chain(*token))
         token_count = Counter(flatten_tokens)
@@ -49,30 +54,33 @@ class FrequencyAnalysis:
         word_count.columns = ['Word', 'Count']
         word_count.to_csv(filename_csv, index = False, encoding='euc-kr')
         
-        self.cloud_visulize(Top_token_count, filename, white)
+        self.cloud_visulize(Top_token_count, filename_png, white)
         return word_count
     
-    def Top_Keyword_Edgelist(self, Token, Edge_list, N, title = '', node_size = 50, edge_size = 10):
-        if not os.path.exists(title + '/Graph'):
-            os.makedirs(title + '/Graph')
-        filename = title + '/Graph/Keyword_Network.png'
+    def Top_Keyword_Edgelist(self, Token, Edge_list, N, outdir = '', node_size = 50, edge_size = 10, filename=''):
+        if not os.path.exists(outdir + '/Graph'):
+            os.makedirs(outdir + '/Graph')
+        filename = outdir + f'/Graph/{filename}'
         flatten_tokens = list(itertools.chain(*Token))
         All_words = Counter(flatten_tokens)
         Top_words = All_words.most_common(N)
         Top_words = [word for (word, count) in Top_words]
         Top_Edge_list = list((x, y, v) for (x,y,v) in Edge_list if (x in Top_words and  y in Top_words))
         G_top = nx.Graph()
+        
         for A,B, weight in Top_Edge_list: G_top.add_edge(A, B, weight=weight, distance = 1/weight)
         width_top = list(nx.get_edge_attributes(G_top, 'weight').values())
         degree = [All_words[node] * node_size for node in list(G_top.nodes)]
         edges_top = G_top.edges()
         weights = [1 for u,v in edges_top]
         
+        with open(f'{filename}.json', 'w', encoding='utf-8') as f:
+            json.dump(G_top.adj._atlas, f, ensure_ascii=False, indent=2)
         plt.figure(figsize=(20,20))
         pos = nx.spring_layout(G_top, k = 0.5)
         nx.draw(G_top, pos, width=weights, node_color= 'yellow', node_size = degree, edge_color= 'green', edge_cmap=plt.cm.Reds)
         nx.draw_networkx_labels(G_top, pos, font_size=32, font_family='AppleGothic', font_color='black')
-        plt.savefig(filename)
+        plt.savefig(f'{filename}.jpg')
         
     def make_Co_Keyword(self, Text):
         Co_Keyword = list(itertools.combinations(Text,2))
@@ -92,7 +100,7 @@ class FrequencyAnalysis:
         :return: 토큰화된 문장 리스트 
         """
         count_dict = {}
-        tagger = Tagger('api-key', 'localhost', port=5656)
+        tagger = Tagger('apikey', 'localhost', port=5656)
         tokenized_lines = []
         for line in tqdm(lines):
             tagged = tagger.tags([line])
@@ -114,21 +122,27 @@ class FrequencyAnalysis:
 if __name__ == '__main__':
     # 데이터 로딩
     texts = []
-    with open('data/summary.txt', 'r', encoding='utf-8') as f:
-        for line in f:
-            texts.append(line.strip())
-            
-    # 빈도 분석 객체 생성
-    fa = FrequencyAnalysis()
-    
-    # 형태소 분석 명사 추출
-    Tokens = fa.preprocess_text(texts)
-    
-    # 워드클라우드 생성
-    word_count = fa.wordcloud_Rank(Tokens, 50, white = True, title = 'out')
-    print(word_count.head(10))
-    
-    # 키워드 네트워크
-    Edge_list = fa.make_Edgelist(Tokens)
-    fa.Top_Keyword_Edgelist(Tokens, Edge_list, 25, title = 'out', node_size = 50, edge_size = 6)
+    dl = DataLoader()
+    files = dl.get_file_list('data')
+    for file in files:
+        basename = os.path.basename(file).split('.txt')[0]
+        with open(file, 'r', encoding='utf-8') as f:
+            for line in f:
+                texts.append(line.strip())
+        join_text = "".join(texts)     
+        cleaned_text = re.sub(r"●|•|ㅇ|■", "", join_text)   
+        texts =  [t + '.' for t in cleaned_text.split(". ")]
+        # 빈도 분석 객체 생성
+        fa = FrequencyAnalysis()
+        
+        # 형태소 분석 명사 추출
+        Tokens = fa.preprocess_text(texts)
+        
+        # 워드클라우드 생성
+        word_count = fa.wordcloud_Rank(Tokens, 50, white = True, outdir = 'out', filename=basename)
+        print(word_count.head(10))
+        
+        # 키워드 네트워크
+        Edge_list = fa.make_Edgelist(Tokens)
+        fa.Top_Keyword_Edgelist(Tokens, Edge_list, 25, outdir = 'out', node_size = 50, edge_size = 6, filename=basename)
     
